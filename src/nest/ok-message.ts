@@ -12,5 +12,5 @@ export type OkMessages = Record<number, string> | string;
  * @OkMessage('User created successfully')
  * @OkMessage({ 200: 'Found', 201: 'Created' })
  */
-export const OkMessage = (messages: OkMessages) =>
+export const OkMessage = (messages: OkMessages): MethodDecorator =>
   SetMetadata(OK_MESSAGE_KEY, messages);

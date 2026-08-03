@@ -1,0 +1,30 @@
+import { AppError } from '../errors/app-error.js';
+
+export type Ok<T> = { readonly ok: true; readonly value: T };
+export type Err<E> = { readonly ok: false; readonly error: E };
+export type Result<T, E = AppError> = Ok<T> | Err<E>;
+
+export function ok<T>(value: T): Ok<T> {
+  return { ok: true, value };
+}
+
+export function err<E>(error: E): Err<E> {
+  return { ok: false, error };
+}
+
+export function isOk<T, E>(result: Result<T, E>): result is Ok<T> {
+  return result.ok;
+}
+
+export function isErr<T, E>(result: Result<T, E>): result is Err<E> {
+  return !result.ok;
+}
+
+/**
+ * Returns the success value, or throws the error (rethrows if already an Error).
+ */
+export function unwrapOrThrow<T, E>(result: Result<T, E>): T {
+  if (result.ok) return result.value;
+  if (result.error instanceof Error) throw result.error;
+  throw new Error(String(result.error));
+}

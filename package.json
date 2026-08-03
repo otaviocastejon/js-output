@@ -1,0 +1,97 @@
+{
+  "name": "js-output",
+  "version": "0.2.0",
+  "description": "Typed error catalogs and HTTP response envelopes for JS/TS — with a drop-in NestJS module",
+  "license": "MIT",
+  "author": "Otavio Castejon",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/otaviocastejon/js-output.git"
+  },
+  "homepage": "https://github.com/otaviocastejon/js-output#readme",
+  "bugs": {
+    "url": "https://github.com/otaviocastejon/js-output/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./nest": {
+      "types": "./dist/nest/index.d.ts",
+      "import": "./dist/nest/index.js",
+      "require": "./dist/nest/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "example:plain": "tsx examples/plain-http.ts",
+    "example:nest": "npm run build && npx tsc -p examples/tsconfig.json && node examples/nest-app/dist/main.js",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "keywords": [
+    "nestjs",
+    "api-response",
+    "error-catalog",
+    "exception-filter",
+    "interceptor",
+    "http-envelope",
+    "typescript"
+  ],
+  "peerDependencies": {
+    "@nestjs/common": ">=10",
+    "@nestjs/core": ">=10",
+    "reflect-metadata": ">=0.1.0",
+    "rxjs": ">=7"
+  },
+  "peerDependenciesMeta": {
+    "@nestjs/common": {
+      "optional": true
+    },
+    "@nestjs/core": {
+      "optional": true
+    },
+    "reflect-metadata": {
+      "optional": true
+    },
+    "rxjs": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.1.28",
+    "@nestjs/core": "^11.1.28",
+    "@nestjs/platform-express": "^11.1.28",
+    "@nestjs/testing": "^11.1.28",
+    "@types/node": "^22.13.10",
+    "@types/supertest": "^7.2.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "supertest": "^7.2.2",
+    "tsup": "^8.4.0",
+    "tsx": "^4.23.5",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.9"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false
+}

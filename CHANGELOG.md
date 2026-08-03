@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-03
+
+### Changed
+
+- `api` preset: `path` defaults to `'auto'` (echo request path only outside production); set `path: true` / `false` to force
+- `api` preset: `errorType` is opt-in (was on by default; it only mirrored `statusCode`)
+- Nest strips query strings from echoed paths (`/users/1?token=…` → `/users/1`)
+- README documents the lean production envelope (no redundant fields)
+
+### Removed
+
+- Internal `docs/POSITIONING.md` and `docs/ADOPTION.md` (README is the stranger-facing source of truth)
+
 ## [0.2.0] - 2026-08-03
 
 ### Added

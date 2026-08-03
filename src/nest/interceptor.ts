@@ -10,6 +10,7 @@ import { Observable, map } from 'rxjs';
 import type { Api, SuccessEnvelope } from '../create-api.js';
 import { OUTPUT_API } from './api.js';
 import { OK_MESSAGE_KEY, type OkMessages } from './ok-message.js';
+import { requestPath } from './request-path.js';
 
 @Injectable()
 export class OutputInterceptor implements NestInterceptor {
@@ -36,7 +37,7 @@ export class OutputInterceptor implements NestInterceptor {
         return this.api.success(data, {
           statusCode,
           message: resolveOkMessage(messages, statusCode),
-          path: request.url,
+          path: requestPath(request.url),
           method: request.method,
         });
       }),

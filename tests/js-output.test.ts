@@ -167,8 +167,8 @@ describe('createApi defaults (api preset)', () => {
       statusCode: 404,
       message: 'User not found',
       path: '/users/1',
-      errorType: 'Not Found',
     });
+    expect(body).not.toHaveProperty('errorType');
   });
 
   it('maps bare Error to Defaults.UNEXPECTED by default', () => {
@@ -177,8 +177,8 @@ describe('createApi defaults (api preset)', () => {
       statusCode: 503,
       errorId: 'APP-503-1',
       title: 'Service Unavailable',
-      errorType: 'Service Unavailable',
     });
+    expect(body).not.toHaveProperty('errorType');
   });
 
   it('keeps the original error under debug outside production', () => {
@@ -324,13 +324,43 @@ describe('createApi api preset and policies', () => {
     const body = api.failure(Users.NOT_FOUND, { path: '/users/1' });
     expect(body).toEqual({
       statusCode: 404,
-      errorType: 'Not Found',
       errorId: 'USERS-404-1',
       title: 'User not found',
       message: 'No user exists for this id.',
       timestamp: expect.any(String),
       path: '/users/1',
     });
+    expect(body).not.toHaveProperty('errorType');
+  });
+
+  it('omits path in production when path is auto', () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const api = createApi({ preset: 'api', debug: false });
+      const body = api.failure(Users.NOT_FOUND, { path: '/users/1' });
+      expect(body).not.toHaveProperty('path');
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
+  });
+
+  it('includes path in production when path is true', () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const api = createApi({ preset: 'api', path: true, debug: false });
+      const body = api.failure(Users.NOT_FOUND, { path: '/users/1' });
+      expect(body.path).toBe('/users/1');
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
+  });
+
+  it('never includes path when path is false', () => {
+    const api = createApi({ preset: 'api', path: false });
+    const body = api.failure(Users.NOT_FOUND, { path: '/users/1' });
+    expect(body).not.toHaveProperty('path');
   });
 
   it('maps bare Error using a catalog unexpected entry', () => {
@@ -351,7 +381,7 @@ describe('createApi api preset and policies', () => {
     expect(body.errorId).toBe('APP-503-1');
     expect(body.title).toBe('Service Unavailable');
     expect(body.message).toBe('Service temporarily unavailable');
-    expect(body.errorType).toBe('Service Unavailable');
+    expect(body).not.toHaveProperty('errorType');
   });
 
   it('forwards structured downstream errors and remaps 500 → 503', () => {

@@ -12,6 +12,7 @@ import { AppError, isAppError } from '../app-error.js';
 import { DownstreamError } from './downstream.js';
 import { AppHttpException } from './http.js';
 import { OUTPUT_API } from './api.js';
+import { requestPath } from './request-path.js';
 
 type Req = { url?: string; method?: string };
 type Res = {
@@ -97,7 +98,7 @@ export class OutputFilter implements ExceptionFilter {
           : exception;
 
     const envelope: FailureEnvelope = this.api.failure(source, {
-      path: request.url,
+      path: requestPath(request.url),
       method: request.method,
     });
 

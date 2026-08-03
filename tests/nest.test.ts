@@ -19,6 +19,7 @@ import {
   toHttp,
   validationError,
 } from '../src/nest/index.js';
+import { requestPath } from '../src/nest/request-path.js';
 
 const Users = createErrors({
   NOT_FOUND: {
@@ -105,12 +106,12 @@ describe('js-output/nest', () => {
     const res = await request(app.getHttpServer()).get('/users/missing').expect(404);
     expect(res.body).toMatchObject({
       statusCode: 404,
-      errorType: 'Not Found',
       errorId: 'USERS-404-1',
       title: 'User not found',
       message: 'No user exists for this id.',
       path: '/users/missing',
     });
+    expect(res.body).not.toHaveProperty('errorType');
   });
 
   it('maps unexpected errors with built-in Defaults.UNEXPECTED', async () => {
@@ -179,5 +180,13 @@ describe('nest helpers', () => {
       title: 'Validation failed',
       message: 'email: email must be an email',
     });
+  });
+});
+
+describe('requestPath', () => {
+  it('drops the query string', () => {
+    expect(requestPath('/users/1?token=secret')).toBe('/users/1');
+    expect(requestPath('/users/1')).toBe('/users/1');
+    expect(requestPath(undefined)).toBeUndefined();
   });
 });

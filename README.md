@@ -85,7 +85,6 @@ Success:
   "statusCode": 200,
   "message": "User fetched successfully",
   "timestamp": "2026-08-03T12:00:00.000Z",
-  "path": "/users/1",
   "data": { "id": "1", "name": "Ada" }
 }
 ```
@@ -95,14 +94,14 @@ Failure:
 ```json
 {
   "statusCode": 404,
-  "errorType": "Not Found",
   "errorId": "USERS-404-1",
   "title": "User not found",
   "message": "No user exists for this id.",
-  "timestamp": "2026-08-03T12:00:00.000Z",
-  "path": "/users/missing"
+  "timestamp": "2026-08-03T12:00:00.000Z"
 }
 ```
+
+`title` is the short UI headline; `message` is the detail. Request `path` is off in production by default (`path: 'auto'`) — see below.
 
 ### Customize when you need to
 
@@ -113,6 +112,8 @@ JsOutputModule.forRoot({
   service: 'billing-api',
   fallback: Users.UNAVAILABLE, // catalog entry, not a magic string
   debug: 'auto',               // attach original error under `debug` outside production
+  path: 'auto',                // echo request path outside production (default)
+  // path: true | false,       // always / never
 });
 ```
 
@@ -203,7 +204,7 @@ withSeqIds('BILLING', {
 
 | Preset | Behavior |
 |--------|----------|
-| `api` (default) | Full product envelope; unknown errors → `APP-503-1`; downstream `500 → 503` |
+| `api` (default) | Product envelope; `path: 'auto'`; unknown errors → `APP-503-1`; downstream `500 → 503` |
 | `detailed` | Rich fields without the opinionated fallback/remap policies |
 | `minimal` | `{ statusCode, message, data? }` only |
 
@@ -220,6 +221,7 @@ Client messages stay safe. Original errors are not thrown away:
 - **Nest** logs unexpected throws (message + stack) via Nest’s Logger  
 - **`onFailure(envelope, original)`** always receives the raw value  
 - **`debug: 'auto'`** (default) adds `{ message, name, stack }` on the failure body outside production  
+- **`path: 'auto'`** (default on `api`) echoes the request pathname outside production (`true` / `false` to force)  
 
 ```ts
 createApi({

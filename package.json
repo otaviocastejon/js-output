@@ -1,6 +1,6 @@
 {
   "name": "js-output",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Typed error catalogs and HTTP response envelopes for JS/TS — with a drop-in NestJS module",
   "license": "MIT",
   "author": "Otavio Castejon",

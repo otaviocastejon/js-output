@@ -8,7 +8,11 @@ export type ApiPreset = 'minimal' | 'detailed' | 'api';
 
 export type EnvelopeFields = {
   timestamp?: boolean;
-  path?: boolean;
+  /**
+   * Echo request path on the envelope.
+   * `'auto'` = only when `NODE_ENV !== 'production'` (same rule as `debug`).
+   */
+  path?: boolean | 'auto';
   method?: boolean;
   requestId?: boolean;
   errorId?: boolean;
@@ -129,7 +133,8 @@ export type Api = {
   readonly options: ResolvedApi;
 };
 
-export type ResolvedApi = Required<EnvelopeFields> & {
+export type ResolvedApi = Omit<Required<EnvelopeFields>, 'path'> & {
+  path: boolean;
   preset: ApiPreset;
   logger?: Logger;
   service?: string;
@@ -158,7 +163,11 @@ const STATUS_TO_ERROR_TYPE: Record<number, string> = {
   504: 'Gateway Timeout',
 };
 
-const PRESET_FLAGS: Record<ApiPreset, Required<EnvelopeFields>> = {
+type PresetFlags = Omit<Required<EnvelopeFields>, 'path'> & {
+  path: boolean | 'auto';
+};
+
+const PRESET_FLAGS: Record<ApiPreset, PresetFlags> = {
   minimal: {
     timestamp: false,
     path: false,
@@ -180,11 +189,11 @@ const PRESET_FLAGS: Record<ApiPreset, Required<EnvelopeFields>> = {
   /** Opinionated HTTP API contract for product clients. */
   api: {
     timestamp: true,
-    path: true,
+    path: 'auto',
     method: false,
     requestId: false,
     errorId: true,
-    errorType: true,
+    errorType: false,
     title: true,
   },
 };
@@ -235,7 +244,7 @@ function resolveOptions(options: ApiConfig = {}): ResolvedApi {
   return {
     preset,
     timestamp: options.timestamp ?? base.timestamp,
-    path: options.path ?? base.path,
+    path: resolveEnvFlag(options.path ?? base.path),
     method: options.method ?? base.method,
     requestId: options.requestId ?? base.requestId,
     errorId: options.errorId ?? base.errorId,
@@ -257,11 +266,14 @@ function resolveOptions(options: ApiConfig = {}): ResolvedApi {
   };
 }
 
-function resolveDebug(option: boolean | 'auto' | undefined): boolean {
-  const mode = option ?? 'auto';
-  if (mode === true) return true;
-  if (mode === false) return false;
+function resolveEnvFlag(option: boolean | 'auto'): boolean {
+  if (option === true) return true;
+  if (option === false) return false;
   return process.env.NODE_ENV !== 'production';
+}
+
+function resolveDebug(option: boolean | 'auto' | undefined): boolean {
+  return resolveEnvFlag(option ?? 'auto');
 }
 
 export function errorCause(original: unknown): ErrorDebug {

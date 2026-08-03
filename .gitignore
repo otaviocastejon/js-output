@@ -5,3 +5,4 @@ examples/nest-app/dist/
 .DS_Store
 coverage/
 *.tgz
+.cursor

@@ -77,7 +77,7 @@ describe('js-output/nest', () => {
       imports: [AppModule],
     }).compile();
 
-    app = moduleRef.createNestApplication();
+    app = moduleRef.createNestApplication({ logger: false });
     await app.init();
   });
 

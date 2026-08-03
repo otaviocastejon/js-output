@@ -32,7 +32,8 @@
     "dist",
     "LICENSE",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
   ],
   "publishConfig": {
     "access": "public"

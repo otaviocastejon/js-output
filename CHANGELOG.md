@@ -9,17 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Opinionated `createApi({ preset: 'api' })` HTTP contract (timestamp, path, errorId, errorType, title; unexpected → 503; downstream 500 → 503)
-- Explicit `errorId` on catalog entries (alias of `id`); `fromLegacyConstants`, `assignSequentialIds`, `parseStatusFromErrorId`
-- Multi-segment prefix docs/tests (`ORDERS-ITEMS-404-1`)
+- Opinionated `api` HTTP contract (timestamp, path, errorId, errorType, title; fallback → 503; downstream 500 → 503)
+- Built-in `Defaults.UNEXPECTED` catalog (`APP-503-1`) for zero-config installs
+- Explicit `errorId` on catalog entries; `errorsFromIds`, `withSeqIds`, `statusFromId`
 - `onFailure` hook and downstream forward policies on `createApi`
-- Nest subpath `js-output/nest`: `JsOutputModule`, exception filter, transform interceptor, `@SuccessMessage`, `DownstreamHttpException`, `validationExceptionFactory`, `toHttpException`
-- Duck-typed `isAppError` so catalog errors work across the core and `js-output/nest` bundle entries
+- Nest subpath `js-output/nest`: drop-in `JsOutputModule`, `OutputFilter`, `OutputInterceptor`, `@OkMessage`, `DownstreamError`, `validationError`
+- Duck-typed `isAppError` across core / nest bundle entries
+- Preserve original errors for debugging: `debug` on failure envelopes (`debug: 'auto'`), logger `cause` + real message, Nest Logger for unexpected throws
+- Flattened package layout; shared Nest `OUTPUT_API`; Nest config is plain `ApiConfig`
 
 ### Changed
 
-- README positioned for NPM strangers (throw-first, Nest as install reason)
-- Package metadata: keywords, peerDependencies (Nest optional), dual exports
+- `createApi()` defaults to `preset: 'api'` + `Defaults.UNEXPECTED` (use `{ preset: 'minimal' }` for bare envelopes)
+- `JsOutputModule` works with zero config (`imports: [JsOutputModule]`); `forRoot` only for overrides
+- Public API renamed for clarity (`fallback`, `errorsFromIds`, `OkMessage`, `toHttp`, `readDownstream`, …)
 
 ## [0.1.0] - 2026-07-31
 

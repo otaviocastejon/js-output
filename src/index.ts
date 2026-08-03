@@ -1,36 +1,38 @@
 export {
   AppError,
-  assignSequentialIds,
   createErrors,
-  fromLegacyConstants,
+  errorsFromIds,
   isAppError,
-  parseStatusFromErrorId,
-} from './errors/index.js';
+  statusFromId,
+  withSeqIds,
+} from './app-error.js';
 export type {
+  ErrorById,
   ErrorCatalog,
+  ErrorDef,
   ErrorDefinition,
   ErrorMap,
-  ExplicitErrorCatalog,
-  ExplicitErrorDefinition,
-  LegacyErrorConstant,
-} from './errors/index.js';
+} from './app-error.js';
 
-export { ok, err, isOk, isErr, unwrapOrThrow } from './result/index.js';
-export type { Ok, Err, Result } from './result/index.js';
+export { Defaults } from './defaults.js';
 
-export { createApi, errorTypeFromStatus } from './api/index.js';
+export { ok, err, isOk, isErr, unwrapOrThrow } from './result.js';
+export type { Ok, Err, Result } from './result.js';
+
+export { createApi } from './create-api.js';
 export type {
   Api,
   ApiPreset,
-  CreateApiOptions,
-  DownstreamPolicy,
-  FieldToggles,
-  RequestContext,
+  ApiConfig,
+  ForwardConfig,
+  EnvelopeFields,
+  HttpCtx,
   SuccessEnvelope,
   FailureEnvelope,
-  ResolvedApiOptions,
-  UnexpectedErrorPolicy,
-} from './api/index.js';
+  ErrorDebug,
+  ResolvedApi,
+  FallbackInput,
+  FallbackError,
+} from './create-api.js';
 
-export type { Logger, LogMeta } from './logger/index.js';
-export { noopLogger } from './logger/index.js';
+export type { Logger, LogMeta } from './logger.js';

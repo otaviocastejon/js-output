@@ -1,19 +1,13 @@
 /**
- * Minimal NestJS sample using js-output/nest (compiled against published-style dist).
+ * Minimal NestJS sample — zero-config JsOutputModule.
  *
- * From repo root:
  *   npm run example:nest
- *
- * Then try:
- *   curl localhost:3000/users/ok
- *   curl localhost:3000/users/missing
- *   curl localhost:3000/users/boom
  */
 import 'reflect-metadata';
 import { Controller, Get, Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { createErrors } from 'js-output';
-import { JsOutputModule, SuccessMessage } from 'js-output/nest';
+import { JsOutputModule, OkMessage } from 'js-output/nest';
 
 const Users = createErrors({
   NOT_FOUND: {
@@ -27,7 +21,7 @@ const Users = createErrors({
 @Controller('users')
 class UsersController {
   @Get('ok')
-  @SuccessMessage('User fetched successfully')
+  @OkMessage('User fetched successfully')
   getOk() {
     return { id: '1', name: 'Ada' };
   }
@@ -44,17 +38,7 @@ class UsersController {
 }
 
 @Module({
-  imports: [
-    JsOutputModule.forRoot({
-      service: 'example-api',
-      unexpectedError: {
-        statusCode: 503,
-        errorId: 'APP-503-1',
-        title: 'Service Unavailable',
-        message: 'Service temporarily unavailable',
-      },
-    }),
-  ],
+  imports: [JsOutputModule],
   controllers: [UsersController],
 })
 class AppModule {}

@@ -25,10 +25,8 @@ export class AppError extends Error {
   }
 }
 
-/**
- * Recommended product catalog entry: stable id + client-facing title/message + HTTP status.
- */
-export type ExplicitErrorDefinition = {
+/** Full product catalog entry: stable id + title + message + status. */
+export type ErrorDef = {
   status: number;
   message: string;
   title: string;
@@ -36,7 +34,7 @@ export type ExplicitErrorDefinition = {
 };
 
 /**
- * Loose catalog entry. Prefer `ExplicitErrorDefinition` for product APIs.
+ * Loose catalog entry. Prefer `ErrorDef` for product APIs.
  * `id` is an alias for `errorId`.
  */
 export type ErrorDefinition = {
@@ -50,27 +48,26 @@ export type ErrorDefinition = {
 
 export type ErrorCatalog = Record<string, ErrorDefinition>;
 
-export type ExplicitErrorCatalog = Record<string, ExplicitErrorDefinition>;
 
 export type ErrorMap<T extends ErrorCatalog> = {
   [K in keyof T]: AppError;
 };
 
 /**
- * Legacy constant shape used by many services: status lives inside `errorId`
- * as `PREFIX-STATUS-SEQ` (supports multi-segment prefixes).
+ * Catalog entry where status lives inside `errorId` as `PREFIX-STATUS-SEQ`
+ * (supports multi-segment prefixes like `ORDERS-ITEMS-404-1`).
  */
-export type LegacyErrorConstant = {
+export type ErrorById = {
   errorId: string;
   title: string;
   message: string;
 };
 
 /**
- * Parse HTTP status from an error id. Uses the second-to-last numeric segment
- * so multi-segment ids like `ORDERS-ITEMS-404-1` resolve to 404.
+ * HTTP status from an error id (second-to-last numeric segment).
+ * `ORDERS-ITEMS-404-1` → 404.
  */
-export function parseStatusFromErrorId(errorId: string): number | undefined {
+export function statusFromId(errorId: string): number | undefined {
   const parts = errorId.split('-');
   if (parts.length < 2) return undefined;
   const statusPart = parts[parts.length - 2];
@@ -78,7 +75,7 @@ export function parseStatusFromErrorId(errorId: string): number | undefined {
   return Number(statusPart);
 }
 
-function resolveExplicitId(entry: ErrorDefinition): string | undefined {
+function resolveId(entry: ErrorDefinition): string | undefined {
   return entry.errorId ?? entry.id;
 }
 
@@ -87,7 +84,7 @@ function buildErrorId(
   entry: ErrorDefinition,
   sequenceForStatus: number,
 ): string | undefined {
-  const explicit = resolveExplicitId(entry);
+  const explicit = resolveId(entry);
   if (explicit) return explicit;
   if (!modulePrefix) return undefined;
   return `${modulePrefix}-${entry.status}-${sequenceForStatus}`;
@@ -134,13 +131,12 @@ function defineCatalogMap<T extends ErrorCatalog>(
 }
 
 /**
- * Create a map of throwable `AppError` values from a catalog.
+ * Create throwable `AppError` values from a catalog.
  *
  * Prefer explicit `errorId` + `title` + `message` + `status` for product APIs.
- * Auto-seq ids (`PREFIX-STATUS-N`) are a helper when a module prefix is set and `errorId` is omitted.
+ * Auto-seq ids (`PREFIX-STATUS-N`) apply when a module prefix is set and `errorId` is omitted.
  *
  * @example
- * // Recommended: explicit stable ids
  * const Users = createErrors({
  *   NOT_FOUND: {
  *     status: 404,
@@ -150,13 +146,6 @@ function defineCatalogMap<T extends ErrorCatalog>(
  *   },
  * } as const);
  * throw Users.NOT_FOUND;
- *
- * @example
- * // Helper: auto-seq with multi-segment prefix
- * const Items = createErrors('ORDERS-ITEMS', {
- *   NOT_FOUND: { status: 404, title: 'Not found', message: 'Missing item' },
- * });
- * // Items.NOT_FOUND.errorId === 'ORDERS-ITEMS-404-1'
  */
 export function createErrors<T extends ErrorCatalog>(catalog: T): ErrorMap<T>;
 export function createErrors<T extends ErrorCatalog>(
@@ -179,25 +168,25 @@ export function createErrors<T extends ErrorCatalog>(
 }
 
 /**
- * Build a catalog from legacy `{ errorId, title, message }` constants.
- * Status is parsed from the error id (second-to-last segment).
+ * Build a catalog from `{ errorId, title, message }` records.
+ * Status is parsed from the id (second-to-last segment).
  */
-export function fromLegacyConstants<T extends Record<string, LegacyErrorConstant>>(
-  constants: T,
-): ErrorMap<{ [K in keyof T]: ExplicitErrorDefinition }> {
-  const catalog = {} as { [K in keyof T]: ExplicitErrorDefinition };
+export function errorsFromIds<T extends Record<string, ErrorById>>(
+  records: T,
+): ErrorMap<{ [K in keyof T]: ErrorDef }> {
+  const catalog = {} as { [K in keyof T]: ErrorDef };
 
-  for (const key of Object.keys(constants) as Array<keyof T>) {
-    const entry = constants[key];
+  for (const key of Object.keys(records) as Array<keyof T>) {
+    const entry = records[key];
     if (!entry || typeof entry.errorId !== 'string') {
       throw new TypeError(
-        `fromLegacyConstants: entry "${String(key)}" must include errorId (string)`,
+        `errorsFromIds: entry "${String(key)}" must include errorId (string)`,
       );
     }
-    const status = parseStatusFromErrorId(entry.errorId);
+    const status = statusFromId(entry.errorId);
     if (status === undefined) {
       throw new TypeError(
-        `fromLegacyConstants: cannot parse status from errorId "${entry.errorId}"`,
+        `errorsFromIds: cannot parse status from errorId "${entry.errorId}"`,
       );
     }
     catalog[key] = {
@@ -212,10 +201,9 @@ export function fromLegacyConstants<T extends Record<string, LegacyErrorConstant
 }
 
 /**
- * Assign sequential `PREFIX-STATUS-N` ids to definitions that omit `errorId` / `id`.
- * Use when you want auto-seq without making it the default product style.
+ * Fill missing ids as `PREFIX-STATUS-N`. Explicit `errorId` / `id` win.
  */
-export function assignSequentialIds<T extends ErrorCatalog>(
+export function withSeqIds<T extends ErrorCatalog>(
   modulePrefix: string,
   catalog: T,
 ): { [K in keyof T]: ErrorDefinition & { errorId: string } } {
@@ -225,9 +213,9 @@ export function assignSequentialIds<T extends ErrorCatalog>(
   for (const key of Object.keys(catalog) as Array<keyof T>) {
     const entry = catalog[key];
     if (!entry) {
-      throw new TypeError(`assignSequentialIds: missing entry "${String(key)}"`);
+      throw new TypeError(`withSeqIds: missing entry "${String(key)}"`);
     }
-    const explicit = resolveExplicitId(entry);
+    const explicit = resolveId(entry);
     const seq = (statusSequences.get(entry.status) ?? 0) + 1;
     statusSequences.set(entry.status, seq);
     const errorId = explicit ?? `${modulePrefix}-${entry.status}-${seq}`;

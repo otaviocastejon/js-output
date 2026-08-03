@@ -1,17 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   AppError,
-  assignSequentialIds,
+  Defaults,
   createApi,
   createErrors,
   err,
-  fromLegacyConstants,
+  errorsFromIds,
   isAppError,
   isErr,
   isOk,
   ok,
-  parseStatusFromErrorId,
+  statusFromId,
   unwrapOrThrow,
+  withSeqIds,
 } from '../src/index.js';
 
 describe('createErrors', () => {
@@ -87,15 +88,15 @@ describe('createErrors', () => {
   });
 });
 
-describe('parseStatusFromErrorId / fromLegacyConstants / assignSequentialIds', () => {
+describe('statusFromId / errorsFromIds / withSeqIds', () => {
   it('parses second-to-last segment as status', () => {
-    expect(parseStatusFromErrorId('USERS-404-1')).toBe(404);
-    expect(parseStatusFromErrorId('ORDERS-ITEMS-403-2')).toBe(403);
-    expect(parseStatusFromErrorId('bad')).toBeUndefined();
+    expect(statusFromId('USERS-404-1')).toBe(404);
+    expect(statusFromId('ORDERS-ITEMS-403-2')).toBe(403);
+    expect(statusFromId('bad')).toBeUndefined();
   });
 
   it('imports legacy constants without rewriting ids', () => {
-    const Catalog = fromLegacyConstants({
+    const Catalog = errorsFromIds({
       NOT_FOUND: {
         errorId: 'ORDERS-ITEMS-404-1',
         title: 'Not found',
@@ -108,8 +109,8 @@ describe('parseStatusFromErrorId / fromLegacyConstants / assignSequentialIds', (
     expect(Catalog.NOT_FOUND.title).toBe('Not found');
   });
 
-  it('assignSequentialIds fills missing ids', () => {
-    const defs = assignSequentialIds('BILLING', {
+  it('withSeqIds fills missing ids', () => {
+    const defs = withSeqIds('BILLING', {
       A: { status: 400, message: 'a' },
       B: { status: 400, message: 'b', errorId: 'KEEP-ME' },
     });
@@ -143,8 +144,64 @@ describe('Result helpers', () => {
   });
 });
 
-describe('createApi defaults (minimal)', () => {
+describe('createApi defaults (api preset)', () => {
   const api = createApi();
+  const Users = createErrors({
+    NOT_FOUND: { status: 404, message: 'User not found' },
+  });
+
+  it('builds the api success envelope by default', () => {
+    const body = api.success({ id: 1 }, { path: '/x' });
+    expect(body).toMatchObject({
+      statusCode: 200,
+      message: 'Operation completed successfully',
+      path: '/x',
+      data: { id: 1 },
+    });
+    expect(body.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('builds a rich failure envelope from AppError by default', () => {
+    const body = api.failure(Users.NOT_FOUND, { path: '/users/1' });
+    expect(body).toMatchObject({
+      statusCode: 404,
+      message: 'User not found',
+      path: '/users/1',
+      errorType: 'Not Found',
+    });
+  });
+
+  it('maps bare Error to Defaults.UNEXPECTED by default', () => {
+    const body = api.failure(new Error('boom'));
+    expect(body).toMatchObject({
+      statusCode: 503,
+      errorId: 'APP-503-1',
+      title: 'Service Unavailable',
+      errorType: 'Service Unavailable',
+    });
+  });
+
+  it('keeps the original error under debug outside production', () => {
+    const api = createApi({ debug: true });
+    const err = new Error('db connection refused');
+    const body = api.failure(err);
+    expect(body.message).not.toBe('db connection refused');
+    expect(body.debug).toMatchObject({
+      message: 'db connection refused',
+      name: 'Error',
+    });
+    expect(body.debug?.stack).toContain('db connection refused');
+  });
+
+  it('omits debug when debug is false', () => {
+    const api = createApi({ debug: false });
+    const body = api.failure(new Error('secret'));
+    expect(body).not.toHaveProperty('debug');
+  });
+});
+
+describe('createApi minimal preset', () => {
+  const api = createApi({ preset: 'minimal' });
   const Users = createErrors({
     NOT_FOUND: { status: 404, message: 'User not found' },
   });
@@ -231,7 +288,7 @@ describe('createApi detailed preset and toggles', () => {
   });
 
   it('maps unknown Error to 500 without inventing an errorId', () => {
-    const api = createApi({ errorId: true, errorType: true });
+    const api = createApi({ preset: 'minimal', errorId: true, errorType: true });
     const body = api.failure(new Error('boom'));
     expect(body.statusCode).toBe(500);
     expect(body.message).toBe('boom');
@@ -276,15 +333,18 @@ describe('createApi api preset and policies', () => {
     });
   });
 
-  it('maps bare Error to 503 under api preset', () => {
-    const api = createApi({
-      preset: 'api',
-      unexpectedError: {
-        statusCode: 503,
+  it('maps bare Error using a catalog unexpected entry', () => {
+    const Defaults = createErrors({
+      UNEXPECTED: {
+        status: 503,
         errorId: 'APP-503-1',
         title: 'Service Unavailable',
         message: 'Service temporarily unavailable',
       },
+    } as const);
+    const api = createApi({
+      preset: 'api',
+      fallback: Defaults.UNEXPECTED,
     });
     const body = api.failure(new Error('secret internals'));
     expect(body.statusCode).toBe(503);
@@ -329,9 +389,29 @@ describe('createApi logger', () => {
     SKIP_ME: { status: 404, message: 'skip', id: 'SKIP-1' },
   });
 
+  it('logs original cause when client message was replaced', () => {
+    const error = vi.fn();
+    const api = createApi({
+      logger: { error },
+      debug: false,
+    });
+
+    api.failure(new Error('db exploded'));
+
+    expect(error).toHaveBeenCalledWith(
+      'db exploded',
+      expect.objectContaining({
+        errorId: 'APP-503-1',
+        cause: expect.objectContaining({ message: 'db exploded' }),
+        stack: expect.stringContaining('db exploded'),
+      }),
+    );
+  });
+
   it('logs on failure when logger is provided', () => {
     const error = vi.fn();
     const api = createApi({
+      preset: 'minimal',
       logger: { error },
       service: 'billing-api',
       errorId: true,
@@ -345,6 +425,7 @@ describe('createApi logger', () => {
       statusCode: 404,
       errorId: 'ORDERS-404-1',
       message: 'missing',
+      cause: expect.objectContaining({ message: 'missing' }),
     }));
   });
 

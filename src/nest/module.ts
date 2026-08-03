@@ -1,30 +1,45 @@
 import { type DynamicModule, Global, Module } from '@nestjs/common';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
-import { JsOutputExceptionFilter } from './exception.filter.js';
-import { JS_OUTPUT_OPTIONS, type JsOutputModuleOptions } from './options.js';
-import { JsOutputTransformInterceptor } from './transform.interceptor.js';
+import {
+  createOutputApi,
+  OUTPUT_API,
+  OUTPUT_OPTIONS,
+  type OutputModuleConfig,
+} from './api.js';
+import { OutputFilter } from './filter.js';
+import { OutputInterceptor } from './interceptor.js';
 
+/**
+ * Drop-in Nest registration.
+ *
+ * @example
+ * imports: [JsOutputModule]
+ * // or
+ * imports: [JsOutputModule.forRoot({ fallback: Defaults.UNEXPECTED })]
+ */
 @Global()
-@Module({})
+@Module({
+  providers: [
+    { provide: OUTPUT_OPTIONS, useValue: {} satisfies OutputModuleConfig },
+    {
+      provide: OUTPUT_API,
+      useFactory: (opts: OutputModuleConfig) => createOutputApi(opts),
+      inject: [OUTPUT_OPTIONS],
+    },
+    OutputFilter,
+    OutputInterceptor,
+    { provide: APP_FILTER, useExisting: OutputFilter },
+    { provide: APP_INTERCEPTOR, useExisting: OutputInterceptor },
+  ],
+  exports: [OUTPUT_OPTIONS, OUTPUT_API],
+})
 export class JsOutputModule {
-  static forRoot(options: JsOutputModuleOptions = {}): DynamicModule {
+  /** Override defaults (same providers; only config changes). */
+  static forRoot(options: OutputModuleConfig = {}): DynamicModule {
     return {
       module: JsOutputModule,
-      providers: [
-        {
-          provide: JS_OUTPUT_OPTIONS,
-          useValue: options,
-        },
-        {
-          provide: APP_FILTER,
-          useClass: JsOutputExceptionFilter,
-        },
-        {
-          provide: APP_INTERCEPTOR,
-          useClass: JsOutputTransformInterceptor,
-        },
-      ],
-      exports: [JS_OUTPUT_OPTIONS],
+      providers: [{ provide: OUTPUT_OPTIONS, useValue: options }],
+      exports: [OUTPUT_OPTIONS, OUTPUT_API],
     };
   }
 }

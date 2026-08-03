@@ -1,9 +1,12 @@
-import { isAppError } from '../errors/app-error.js';
-import type { Logger } from '../logger/types.js';
+import { AppError, isAppError } from './app-error.js';
+import type { ErrorDef } from './app-error.js';
+import { Defaults } from './defaults.js';
+import type { Logger } from './logger.js';
+import { isForwardable, readStructuredFields, remapStatus } from './parse.js';
 
 export type ApiPreset = 'minimal' | 'detailed' | 'api';
 
-export type FieldToggles = {
+export type EnvelopeFields = {
   timestamp?: boolean;
   path?: boolean;
   method?: boolean;
@@ -13,15 +16,34 @@ export type FieldToggles = {
   title?: boolean;
 };
 
-/** How bare / unexpected errors map at the HTTP boundary. */
-export type UnexpectedErrorPolicy = {
+/** Resolved shape used internally after normalizing a catalog entry / AppError. */
+export type FallbackError = {
   statusCode: number;
   message?: string;
   title?: string;
   errorId?: string;
 };
 
-export type DownstreamPolicy = {
+/**
+ * Prefer a catalog `AppError` (or explicit definition). Plain policy objects remain supported.
+ *
+ * @example
+ * const Catalog = createErrors({
+ *   UNEXPECTED: {
+ *     status: 503,
+ *     errorId: 'APP-503-1',
+ *     title: 'Service Unavailable',
+ *     message: 'Service temporarily unavailable',
+ *   },
+ * } as const);
+ * createApi({ preset: 'api', fallback: Defaults.UNEXPECTED });
+ */
+export type FallbackInput =
+  | AppError
+  | ErrorDef
+  | FallbackError;
+
+export type ForwardConfig = {
   /**
    * When a structured error already carries id/title/message/status, pass them through.
    * Default: true.
@@ -34,29 +56,36 @@ export type DownstreamPolicy = {
   remapStatus?: Partial<Record<number, number>>;
 };
 
-export type CreateApiOptions = FieldToggles & {
+export type ApiConfig = EnvelopeFields & {
   /** Shortcut over toggles. Explicit flags override the preset. */
   preset?: ApiPreset;
   logger?: Logger;
   service?: string;
   skipErrorIds?: string[];
   /** Default success message when none is passed to `success()`. */
-  defaultSuccessMessage?: string;
+  okMessage?: string;
   /**
-   * Mapping for unknown / bare Error values.
+   * Catalog entry (preferred) or policy for unknown / bare Error values.
    * Default for `api` preset: status 503. Default otherwise: status 500.
    */
-  unexpectedError?: UnexpectedErrorPolicy;
+  fallback?: FallbackInput;
   /** Downstream structured-error forwarding. */
-  downstream?: DownstreamPolicy;
+  downstream?: ForwardConfig;
   /**
    * Optional hook after a failure envelope is built (e.g. access-log integration).
    * Prefer this over baking a second log stream into the library.
+   * Always receives the original thrown value as the second argument.
    */
   onFailure?: (envelope: FailureEnvelope, original: unknown) => void;
+  /**
+   * Attach original error details on the failure envelope under `debug`
+   * (message / name / stack). Default `'auto'` = on when `NODE_ENV !== 'production'`.
+   * Client-facing `message` / `title` stay catalog-safe either way.
+   */
+  debug?: boolean | 'auto';
 };
 
-export type RequestContext = {
+export type HttpCtx = {
   statusCode?: number;
   message?: string;
   path?: string;
@@ -74,6 +103,13 @@ export type SuccessEnvelope = {
   requestId?: string;
 };
 
+/** Original error details for local debugging — not a substitute for server logs. */
+export type ErrorDebug = {
+  message: string;
+  name?: string;
+  stack?: string;
+};
+
 export type FailureEnvelope = {
   statusCode: number;
   message: string;
@@ -84,25 +120,27 @@ export type FailureEnvelope = {
   errorId?: string;
   errorType?: string;
   title?: string;
+  debug?: ErrorDebug;
 };
 
 export type Api = {
-  success: <T>(data?: T, context?: RequestContext) => SuccessEnvelope;
-  failure: (error: unknown, context?: RequestContext) => FailureEnvelope;
-  readonly options: ResolvedApiOptions;
+  success: <T>(data?: T, context?: HttpCtx) => SuccessEnvelope;
+  failure: (error: unknown, context?: HttpCtx) => FailureEnvelope;
+  readonly options: ResolvedApi;
 };
 
-export type ResolvedApiOptions = Required<FieldToggles> & {
+export type ResolvedApi = Required<EnvelopeFields> & {
   preset: ApiPreset;
   logger?: Logger;
   service?: string;
   skipErrorIds: string[];
-  defaultSuccessMessage: string;
-  unexpectedError: UnexpectedErrorPolicy;
-  downstream: Required<Pick<DownstreamPolicy, 'forward'>> & {
+  okMessage: string;
+  fallback: FallbackError;
+  downstream: Required<Pick<ForwardConfig, 'forward'>> & {
     remapStatus: Partial<Record<number, number>>;
   };
   onFailure?: (envelope: FailureEnvelope, original: unknown) => void;
+  debug: boolean;
 };
 
 const STATUS_TO_ERROR_TYPE: Record<number, string> = {
@@ -120,7 +158,7 @@ const STATUS_TO_ERROR_TYPE: Record<number, string> = {
   504: 'Gateway Timeout',
 };
 
-const PRESET_FLAGS: Record<ApiPreset, Required<FieldToggles>> = {
+const PRESET_FLAGS: Record<ApiPreset, Required<EnvelopeFields>> = {
   minimal: {
     timestamp: false,
     path: false,
@@ -151,18 +189,48 @@ const PRESET_FLAGS: Record<ApiPreset, Required<FieldToggles>> = {
   },
 };
 
-function resolveOptions(options: CreateApiOptions = {}): ResolvedApiOptions {
-  const preset = options.preset ?? 'minimal';
-  const base = PRESET_FLAGS[preset];
+function resolveFallback(
+  input: FallbackInput | undefined,
+  preset: ApiPreset,
+): FallbackError {
+  if (input === undefined) {
+    if (preset === 'api') {
+      const unexpected = Defaults.UNEXPECTED;
+      return {
+        statusCode: unexpected.status,
+        message: unexpected.message,
+        title: unexpected.title,
+        errorId: unexpected.errorId,
+      };
+    }
+    return { statusCode: 500 };
+  }
 
-  const defaultUnexpected: UnexpectedErrorPolicy =
-    preset === 'api'
-      ? {
-          statusCode: 503,
-          message: 'Service temporarily unavailable',
-          title: 'Service Unavailable',
-        }
-      : { statusCode: 500 };
+  if (isAppError(input)) {
+    return {
+      statusCode: input.status,
+      message: input.message,
+      title: input.title,
+      errorId: input.errorId,
+    };
+  }
+
+  if ('status' in input && typeof input.status === 'number') {
+    const def = input as ErrorDef;
+    return {
+      statusCode: def.status,
+      message: def.message,
+      title: def.title,
+      errorId: def.errorId,
+    };
+  }
+
+  return { ...(input as FallbackError) };
+}
+
+function resolveOptions(options: ApiConfig = {}): ResolvedApi {
+  const preset = options.preset ?? 'api';
+  const base = PRESET_FLAGS[preset];
 
   return {
     preset,
@@ -176,22 +244,47 @@ function resolveOptions(options: CreateApiOptions = {}): ResolvedApiOptions {
     logger: options.logger,
     service: options.service,
     skipErrorIds: options.skipErrorIds ?? [],
-    defaultSuccessMessage:
-      options.defaultSuccessMessage ??
+    okMessage:
+      options.okMessage ??
       (preset === 'api' ? 'Operation completed successfully' : 'OK'),
-    unexpectedError: {
-      ...defaultUnexpected,
-      ...options.unexpectedError,
-    },
+    fallback: resolveFallback(options.fallback, preset),
     downstream: {
       forward: options.downstream?.forward ?? true,
       remapStatus: options.downstream?.remapStatus ?? (preset === 'api' ? { 500: 503 } : {}),
     },
     onFailure: options.onFailure,
+    debug: resolveDebug(options.debug),
   };
 }
 
-export function errorTypeFromStatus(status: number): string {
+function resolveDebug(option: boolean | 'auto' | undefined): boolean {
+  const mode = option ?? 'auto';
+  if (mode === true) return true;
+  if (mode === false) return false;
+  return process.env.NODE_ENV !== 'production';
+}
+
+export function errorCause(original: unknown): ErrorDebug {
+  if (original instanceof Error) {
+    const info: ErrorDebug = {
+      message: original.message,
+      name: original.name,
+    };
+    if (original.stack) info.stack = original.stack;
+    return info;
+  }
+
+  if (original && typeof original === 'object') {
+    const obj = original as Record<string, unknown>;
+    if (typeof obj.message === 'string') {
+      return { message: obj.message };
+    }
+  }
+
+  return { message: original == null ? String(original) : String(original) };
+}
+
+export function typeFromStatus(status: number): string {
   return STATUS_TO_ERROR_TYPE[status] ?? 'Error';
 }
 
@@ -203,50 +296,12 @@ type NormalizedFailure = {
   fromStructured?: boolean;
 };
 
-function applyRemap(
-  statusCode: number,
-  remap: Partial<Record<number, number>>,
-): number {
-  return remap[statusCode] ?? statusCode;
-}
 
-function readStructuredFields(obj: Record<string, unknown>): {
-  statusCode?: number;
-  message?: string;
-  title?: string;
-  errorId?: string;
-} {
-  const statusCode =
-    typeof obj.statusCode === 'number'
-      ? obj.statusCode
-      : typeof obj.status === 'number'
-        ? obj.status
-        : undefined;
-  const message = typeof obj.message === 'string' ? obj.message : undefined;
-  const title = typeof obj.title === 'string' ? obj.title : undefined;
-  const errorId =
-    typeof obj.errorId === 'string'
-      ? obj.errorId
-      : typeof obj.id === 'string'
-        ? obj.id
-        : undefined;
-  return { statusCode, message, title, errorId };
-}
 
-function isForwardableStructured(
-  fields: ReturnType<typeof readStructuredFields>,
-): boolean {
-  return (
-    typeof fields.statusCode === 'number' &&
-    typeof fields.message === 'string' &&
-    typeof fields.title === 'string' &&
-    typeof fields.errorId === 'string'
-  );
-}
 
 function normalizeError(
   error: unknown,
-  resolved: ResolvedApiOptions,
+  resolved: ResolvedApi,
 ): NormalizedFailure {
   if (isAppError(error)) {
     return {
@@ -262,9 +317,9 @@ function normalizeError(
     const obj = error as Record<string, unknown>;
     const fields = readStructuredFields(obj);
 
-    if (resolved.downstream.forward && isForwardableStructured(fields)) {
+    if (resolved.downstream.forward && isForwardable(fields)) {
       return {
-        statusCode: applyRemap(fields.statusCode!, resolved.downstream.remapStatus),
+        statusCode: remapStatus(fields.statusCode!, resolved.downstream.remapStatus),
         message: fields.message!,
         title: fields.title,
         errorId: fields.errorId,
@@ -274,8 +329,8 @@ function normalizeError(
 
     if (typeof fields.statusCode === 'number' || typeof fields.message === 'string') {
       return {
-        statusCode: applyRemap(
-          fields.statusCode ?? resolved.unexpectedError.statusCode,
+        statusCode: remapStatus(
+          fields.statusCode ?? resolved.fallback.statusCode,
           resolved.downstream.remapStatus,
         ),
         message: fields.message ?? '',
@@ -286,7 +341,7 @@ function normalizeError(
     }
   }
 
-  const unexpected = resolved.unexpectedError;
+  const unexpected = resolved.fallback;
   const message =
     unexpected.message ??
     (error instanceof Error ? error.message : error == null ? '' : String(error));
@@ -302,8 +357,8 @@ function normalizeError(
 
 function applyContextFields(
   target: Record<string, unknown>,
-  flags: ResolvedApiOptions,
-  context: RequestContext | undefined,
+  flags: ResolvedApi,
+  context: HttpCtx | undefined,
 ): void {
   if (flags.timestamp) {
     target.timestamp = new Date().toISOString();
@@ -320,16 +375,17 @@ function applyContextFields(
 }
 
 /**
- * Create an API envelope helper. All options are optional; defaults are minimal.
- * Prefer `preset: 'api'` for product HTTP contracts.
+ * Create an API envelope helper.
+ * Defaults to the opinionated `api` preset (product HTTP contract + built-in unexpected catalog).
+ * Pass `{ preset: 'minimal' }` for the smallest envelopes.
  */
-export function createApi(options: CreateApiOptions = {}): Api {
+export function createApi(options: ApiConfig = {}): Api {
   const resolved = resolveOptions(options);
 
-  function success<T>(data?: T, context: RequestContext = {}): SuccessEnvelope {
+  function success<T>(data?: T, context: HttpCtx = {}): SuccessEnvelope {
     const envelope: SuccessEnvelope = {
       statusCode: context.statusCode ?? 200,
-      message: context.message ?? resolved.defaultSuccessMessage,
+      message: context.message ?? resolved.okMessage,
     };
 
     if (data !== undefined) {
@@ -342,7 +398,7 @@ export function createApi(options: CreateApiOptions = {}): Api {
     return envelope;
   }
 
-  function failure(error: unknown, context: RequestContext = {}): FailureEnvelope {
+  function failure(error: unknown, context: HttpCtx = {}): FailureEnvelope {
     const normalized = normalizeError(error, resolved);
     const statusCode = context.statusCode ?? normalized.statusCode;
 
@@ -358,14 +414,22 @@ export function createApi(options: CreateApiOptions = {}): Api {
     }
 
     if (resolved.errorType) {
-      envelope.errorType = errorTypeFromStatus(statusCode);
+      envelope.errorType = typeFromStatus(statusCode);
     }
 
     if (resolved.title && normalized.title) {
       envelope.title = normalized.title;
     }
 
-    maybeLogFailure(resolved, envelope, error);
+    if (resolved.debug) {
+      const cause = errorCause(error);
+      // Surface original details when the client-facing message is not the real error.
+      if (!normalized.fromStructured || cause.message !== envelope.message) {
+        envelope.debug = cause;
+      }
+    }
+
+    logFailure(resolved, envelope, error);
     resolved.onFailure?.(envelope, error);
     return envelope;
   }
@@ -377,8 +441,8 @@ export function createApi(options: CreateApiOptions = {}): Api {
   };
 }
 
-function maybeLogFailure(
-  resolved: ResolvedApiOptions,
+function logFailure(
+  resolved: ResolvedApi,
   envelope: FailureEnvelope,
   original: unknown,
 ): void {
@@ -389,9 +453,11 @@ function maybeLogFailure(
     return;
   }
 
+  const cause = errorCause(original);
   const meta: Record<string, unknown> = {
     statusCode: envelope.statusCode,
     message: envelope.message,
+    cause,
   };
 
   if (resolved.service) meta.service = resolved.service;
@@ -401,10 +467,13 @@ function maybeLogFailure(
   if (envelope.path) meta.path = envelope.path;
   if (envelope.method) meta.method = envelope.method;
   if (envelope.requestId) meta.requestId = envelope.requestId;
+  if (cause.stack) meta.stack = cause.stack;
 
-  if (original instanceof Error && original.stack) {
-    meta.stack = original.stack;
-  }
+  // Prefer the real error text in the log line when the client message was replaced.
+  const logMessage =
+    cause.message && cause.message !== envelope.message
+      ? cause.message
+      : envelope.message;
 
-  logger.error(envelope.message, meta);
+  logger.error(logMessage, meta);
 }

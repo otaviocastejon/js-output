@@ -1,6 +1,5 @@
 /**
- * Minimal Express-style example (no Express dependency).
- * Prefer throw + createApi({ preset: 'api' }) at the HTTP boundary.
+ * Minimal HTTP-boundary example — createApi() just works.
  */
 import { createApi, createErrors } from '../src/index.js';
 
@@ -23,15 +22,7 @@ function getUser(id: string): User {
   return user;
 }
 
-const api = createApi({
-  preset: 'api',
-  unexpectedError: {
-    statusCode: 503,
-    errorId: 'APP-503-1',
-    title: 'Service Unavailable',
-    message: 'Service temporarily unavailable',
-  },
-});
+const api = createApi();
 
 function handle(path: string) {
   const id = path.split('/').pop() ?? '';
@@ -49,3 +40,11 @@ function handle(path: string) {
 
 console.log('ok:', JSON.stringify(handle('/users/1'), null, 2));
 console.log('err:', JSON.stringify(handle('/users/missing'), null, 2));
+console.log('boom:', JSON.stringify((() => {
+  try {
+    throw new Error('secret');
+  } catch (error) {
+    const body = api.failure(error, { path: '/boom' });
+    return { status: body.statusCode, body };
+  }
+})(), null, 2));

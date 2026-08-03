@@ -5,7 +5,6 @@ import {
   HttpCode,
   type INestApplication,
   Module,
-  NotFoundException,
   Param,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -13,12 +12,12 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createErrors } from '../src/index.js';
 import {
-  DownstreamHttpException,
+  DownstreamError,
   JsOutputModule,
-  SuccessMessage,
-  parseDownstreamError,
-  toHttpException,
-  validationExceptionFactory,
+  OkMessage,
+  readDownstream,
+  toHttp,
+  validationError,
 } from '../src/nest/index.js';
 
 const Users = createErrors({
@@ -33,7 +32,7 @@ const Users = createErrors({
 @Controller('users')
 class UsersController {
   @Get(':id')
-  @SuccessMessage('User fetched successfully')
+  @OkMessage('User fetched successfully')
   getOne(@Param('id') id: string) {
     if (id === 'missing') {
       throw Users.NOT_FOUND;
@@ -41,11 +40,8 @@ class UsersController {
     if (id === 'boom') {
       throw new Error('secret');
     }
-    if (id === 'nest') {
-      throw new NotFoundException('legacy not found');
-    }
     if (id === 'down') {
-      throw DownstreamHttpException.fromBody(
+      throw DownstreamError.fromBody(
         {
           statusCode: 500,
           errorId: 'PAYMENTS-500-1',
@@ -60,24 +56,14 @@ class UsersController {
 
   @Get()
   @HttpCode(201)
-  @SuccessMessage({ 201: 'User created successfully' })
+  @OkMessage({ 201: 'User created successfully' })
   create() {
     return { id: 'new' };
   }
 }
 
 @Module({
-  imports: [
-    JsOutputModule.forRoot({
-      service: 'demo-api',
-      unexpectedError: {
-        statusCode: 503,
-        errorId: 'APP-503-1',
-        title: 'Service Unavailable',
-        message: 'Service temporarily unavailable',
-      },
-    }),
-  ],
+  imports: [JsOutputModule],
   controllers: [UsersController],
 })
 class AppModule {}
@@ -127,17 +113,21 @@ describe('js-output/nest', () => {
     });
   });
 
-  it('maps unexpected errors with configured policy', async () => {
+  it('maps unexpected errors with built-in Defaults.UNEXPECTED', async () => {
     const res = await request(app.getHttpServer()).get('/users/boom').expect(503);
     expect(res.body).toMatchObject({
       statusCode: 503,
       errorId: 'APP-503-1',
       title: 'Service Unavailable',
-      message: 'Service temporarily unavailable',
+    });
+    // Non-production test env keeps original error for debugging
+    expect(res.body.debug).toMatchObject({
+      message: 'secret',
+      name: 'Error',
     });
   });
 
-  it('forwards DownstreamHttpException and remaps 500 → 503', async () => {
+  it('forwards DownstreamError and remaps 500 → 503', async () => {
     const res = await request(app.getHttpServer()).get('/users/down').expect(503);
     expect(res.body).toMatchObject({
       errorId: 'PAYMENTS-500-1',
@@ -148,8 +138,8 @@ describe('js-output/nest', () => {
 });
 
 describe('nest helpers', () => {
-  it('toHttpException preserves AppError fields', () => {
-    const http = toHttpException(Users.NOT_FOUND);
+  it('toHttp preserves AppError fields', () => {
+    const http = toHttp(Users.NOT_FOUND);
     expect(http.getStatus()).toBe(404);
     expect(http.getResponse()).toMatchObject({
       errorId: 'USERS-404-1',
@@ -157,8 +147,8 @@ describe('nest helpers', () => {
     });
   });
 
-  it('parseDownstreamError remaps 500 → 503', () => {
-    const parsed = parseDownstreamError(
+  it('readDownstream remaps 500 → 503', () => {
+    const parsed = readDownstream(
       {
         statusCode: 500,
         errorId: 'X-500-1',
@@ -175,8 +165,8 @@ describe('nest helpers', () => {
     });
   });
 
-  it('validationExceptionFactory builds structured 400s', () => {
-    const factory = validationExceptionFactory();
+  it('validationError builds structured 400s', () => {
+    const factory = validationError();
     const exception = factory([
       {
         property: 'email',

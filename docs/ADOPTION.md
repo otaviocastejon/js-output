@@ -2,17 +2,17 @@
 
 ## Proven locally
 
-- Core + Nest unit/integration tests: `npm test` (32 passing)
+- Core + Nest unit/integration tests: `npm test`
 - Generic Nest sample: `npm run example:nest`
-  - `GET /users/ok` → success envelope with `@SuccessMessage`
+  - `GET /users/ok` → success envelope with `@OkMessage`
   - `GET /users/missing` → catalog failure `USERS-404-1`
-  - `GET /users/boom` → unexpected policy `APP-503-1` / 503
+  - `GET /users/boom` → fallback `APP-503-1` / 503 (+ original in logs / `debug`)
 - Plain HTTP sketch: `npm run example:plain`
 
 ## Prove it helps strangers
 
 1. Run the Nest sample and confirm envelopes match the README.
-2. Drop `JsOutputModule.forRoot` into a greenfield Nest service and replace a hand-rolled filter/interceptor.
+2. Drop `JsOutputModule` into a greenfield Nest service and replace a hand-rolled filter/interceptor.
 3. Keep public docs generic — do not require knowledge of any private codebase.
 
 ## Soft launch checklist

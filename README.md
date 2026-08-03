@@ -1,47 +1,53 @@
 # js-output
 
-Typed **error catalogs** and consistent HTTP **response envelopes** for JavaScript/TypeScript — with a drop-in **NestJS** module so you stop copying the same filter and interceptor into every service.
+Stable HTTP response envelopes and typed error catalogs for TypeScript — with a NestJS module that works with zero config.
 
 ```bash
 npm install js-output
-# Nest apps also need Nest peers (already in most Nest projects):
-# @nestjs/common @nestjs/core reflect-metadata rxjs
 ```
 
-## Why this exists
+**Throw in your use cases. Shape responses once at the boundary.**
 
-Most Nest apps reinvent:
+---
 
-1. Stable error ids + client-safe messages thrown from use cases
-2. One success/failure JSON shape for clients
-3. A global exception filter + response interceptor
+## The problem
 
-Envelope-only packages wrap responses. RFC 9457 packages target Problem Details. **js-output** combines catalogs you `throw` with envelopes and optional Nest wiring.
+Every Nest (and most Node HTTP) service ends up inventing the same three things:
 
-## 30-second Nest setup
+1. A consistent success/error JSON shape for clients  
+2. Stable `errorId`s you can throw from business code  
+3. A global exception filter + response interceptor  
+
+Envelope packages usually wrap responses. They rarely give you a catalog you can `throw`. This library does both.
+
+---
+
+## Nest (recommended)
+
+### 1. Install the module
 
 ```ts
-// app.module.ts
 import { Module } from '@nestjs/common';
 import { JsOutputModule } from 'js-output/nest';
 
 @Module({
-  imports: [
-    JsOutputModule.forRoot({
-      unexpectedError: {
-        statusCode: 503,
-        errorId: 'APP-503-1',
-        title: 'Service Unavailable',
-        message: 'Service temporarily unavailable',
-      },
-    }),
-  ],
+  imports: [JsOutputModule],
 })
 export class AppModule {}
 ```
 
+That registers:
+
+- a global exception filter  
+- a response interceptor  
+- the `api` preset (product-shaped envelopes)  
+- a built-in fallback for unknown errors (`Defaults.UNEXPECTED` → `APP-503-1`)
+
+No options required.
+
+### 2. Define errors and throw them
+
 ```ts
-// users.errors.ts
 import { createErrors } from 'js-output';
 
 export const Users = createErrors({
@@ -55,15 +61,14 @@ export const Users = createErrors({
 ```
 
 ```ts
-// users.controller.ts
 import { Controller, Get, Param } from '@nestjs/common';
-import { SuccessMessage } from 'js-output/nest';
+import { OkMessage } from 'js-output/nest';
 import { Users } from './users.errors.js';
 
 @Controller('users')
 export class UsersController {
   @Get(':id')
-  @SuccessMessage('User fetched successfully')
+  @OkMessage('User fetched successfully')
   getOne(@Param('id') id: string) {
     if (id !== '1') throw Users.NOT_FOUND;
     return { id, name: 'Ada' };
@@ -71,7 +76,9 @@ export class UsersController {
 }
 ```
 
-**Success**
+### What clients get
+
+Success:
 
 ```json
 {
@@ -83,7 +90,7 @@ export class UsersController {
 }
 ```
 
-**Failure**
+Failure:
 
 ```json
 {
@@ -97,10 +104,37 @@ export class UsersController {
 }
 ```
 
-## Core-only (Express / Fastify / plain Node)
+### Customize when you need to
+
+`forRoot` accepts the same options as `createApi`:
+
+```ts
+JsOutputModule.forRoot({
+  service: 'billing-api',
+  fallback: Users.UNAVAILABLE, // catalog entry, not a magic string
+  debug: 'auto',               // attach original error under `debug` outside production
+});
+```
+
+Other Nest helpers (opt-in):
+
+| Export | Use for |
+|--------|---------|
+| `@OkMessage(...)` | Per-route success copy |
+| `validationError()` | `ValidationPipe` → catalog-shaped 400 |
+| `DownstreamError` / `readDownstream` | Forward upstream error envelopes |
+| `toHttp` / `AppHttpException` | Turn `AppError` into Nest `HttpException` |
+
+---
+
+## Plain Node / Express / Fastify
+
+Same core, no Nest:
 
 ```ts
 import { createApi, createErrors } from 'js-output';
+
+const api = createApi(); // api preset + Defaults.UNEXPECTED
 
 const Orders = createErrors({
   NOT_FOUND: {
@@ -111,97 +145,126 @@ const Orders = createErrors({
   },
 } as const);
 
-const api = createApi({ preset: 'api' });
-
-try {
-  throw Orders.NOT_FOUND;
-} catch (error) {
-  const body = api.failure(error, { path: '/orders/1' });
-  // res.status(body.statusCode).json(body)
-}
+app.get('/orders/:id', (req, res) => {
+  try {
+    const order = getOrder(req.params.id); // may throw Orders.NOT_FOUND
+    res.json(api.success(order, { path: req.path, message: 'Order fetched' }));
+  } catch (error) {
+    const body = api.failure(error, { path: req.path });
+    res.status(body.statusCode).json(body);
+  }
+});
 ```
 
-Business code throws. Wire `api.success` / `api.failure` once at the HTTP boundary.
+Wire `success` / `failure` **once** at the HTTP boundary. Keep throwing in the rest of the app.
 
-## Presets
-
-| Preset | Use when |
-|--------|----------|
-| `minimal` (default) | Smallest `{ statusCode, message, data? }` |
-| `detailed` | Adds timestamp, path, errorId, errorType, title |
-| `api` | **Recommended product HTTP contract** — same rich fields, unexpected errors → 503 by default, downstream `500 → 503` remap |
-
-```ts
-createApi({ preset: 'api' });
-```
+---
 
 ## Error catalogs
 
-Prefer **explicit** `errorId` + `title` + `message` + `status` for product APIs (stable client contracts).
-
-Auto-seq (`PREFIX-STATUS-N`) is available as a helper — including multi-segment prefixes:
+Prefer explicit fields — they are your public contract:
 
 ```ts
-createErrors('ORDERS-ITEMS', {
-  NOT_FOUND: { status: 404, title: 'Not found', message: 'Missing' },
-});
-// → ORDERS-ITEMS-404-1
+createErrors({
+  CONFLICT: {
+    status: 409,
+    errorId: 'ORDERS-409-1',
+    title: 'Conflict',
+    message: 'Order already exists.',
+  },
+} as const);
 ```
 
-Migrate existing `{ errorId, title, message }` maps without rewriting ids:
+Helpers when you need them:
 
 ```ts
-import { fromLegacyConstants } from 'js-output';
+import { Defaults, errorsFromIds, withSeqIds } from 'js-output';
 
-const Catalog = fromLegacyConstants({
+Defaults.UNEXPECTED; // APP-503-1 — used when something unexpected blows up
+
+// Status lives in the id (ORDERS-ITEMS-404-1 → 404)
+errorsFromIds({
   NOT_FOUND: {
     errorId: 'ORDERS-ITEMS-404-1',
     title: 'Not found',
     message: 'Missing item',
   },
 });
+
+// Auto-seq ids: PREFIX-STATUS-N
+withSeqIds('BILLING', {
+  INVALID: { status: 400, title: 'Invalid', message: 'Bad input' },
+});
 ```
 
-## Nest extras
+---
 
-| Export | Role |
-|--------|------|
-| `JsOutputModule.forRoot(options)` | Registers filter + interceptor |
-| `JsOutputExceptionFilter` | Failure envelopes |
-| `JsOutputTransformInterceptor` | Success envelopes |
-| `@SuccessMessage(...)` | Per-route success copy |
-| `toHttpException` / `AppHttpException` | AppError → Nest HttpException |
-| `DownstreamHttpException` / `parseDownstreamError` | Forward structured upstream errors |
-| `validationExceptionFactory` | Map ValidationPipe errors into the catalog shape |
+## Presets
+
+| Preset | Behavior |
+|--------|----------|
+| `api` (default) | Full product envelope; unknown errors → `APP-503-1`; downstream `500 → 503` |
+| `detailed` | Rich fields without the opinionated fallback/remap policies |
+| `minimal` | `{ statusCode, message, data? }` only |
 
 ```ts
-app.useGlobalPipes(
-  new ValidationPipe({
-    exceptionFactory: validationExceptionFactory(),
-  }),
-);
+createApi({ preset: 'minimal' });
 ```
 
-Logging stays optional: no logger by default. Use `onFailure` or `skipErrorIds` to integrate with your access logger — not a second error stream inside the library.
+---
 
-## Result helpers (optional)
+## Debugging
 
-Most Nest apps should **throw**. Tiny `ok` / `err` helpers are available for Result-style code paths; they are not the primary DX.
+Client messages stay safe. Original errors are not thrown away:
+
+- **Nest** logs unexpected throws (message + stack) via Nest’s Logger  
+- **`onFailure(envelope, original)`** always receives the raw value  
+- **`debug: 'auto'`** (default) adds `{ message, name, stack }` on the failure body outside production  
+
+```ts
+createApi({
+  debug: false, // never expose debug on the wire
+  onFailure(envelope, original) {
+    // your access log / metrics
+  },
+});
+```
+
+---
+
+## API surface
+
+**`js-output`**
+
+`createApi`, `createErrors`, `errorsFromIds`, `withSeqIds`, `statusFromId`, `AppError`, `isAppError`, `Defaults`, plus small Result helpers (`ok` / `err` / …).
+
+**`js-output/nest`**
+
+`JsOutputModule`, `OutputFilter`, `OutputInterceptor`, `OkMessage`, `DownstreamError`, `readDownstream`, `validationError`, `toHttp`, `AppHttpException`.
+
+Result helpers are optional. Prefer **throw**.
+
+---
 
 ## Examples
 
 ```bash
-npm run example:plain   # core envelopes, no framework
-npm run example:nest    # Nest module on :3000 (/users/ok|missing|boom)
+npm run example:plain   # core only
+npm run example:nest    # Nest on :3000 — /users/ok | /users/missing | /users/boom
 ```
 
-## Semver
+---
 
-- **0.x** — API may evolve; changelog every release
-- Envelope field additions/removals after **1.0** are breaking when clients depend on the shape
+## Versioning
 
-See [CHANGELOG.md](./CHANGELOG.md). Positioning notes: [docs/POSITIONING.md](./docs/POSITIONING.md).
+This is **0.x**. Envelope and catalog shapes may still evolve; see [CHANGELOG.md](./CHANGELOG.md).
+
+After **1.0**, field changes that clients depend on are semver-major.
+
+---
 
 ## License
 
-MIT
+MIT © [Otavio Castejon](https://github.com/otaviocastejon)
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) to develop locally.

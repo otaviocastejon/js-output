@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nest strips query strings from echoed paths (`/users/1?token=…` → `/users/1`)
 - README documents the lean production envelope (no redundant fields)
 
+### Added
+
+- Husky pre-commit hook: `npm run check` (typecheck + tests + build), same gate as CI
+
 ### Removed
 
 - Internal `docs/POSITIONING.md` and `docs/ADOPTION.md` (README is the stranger-facing source of truth)

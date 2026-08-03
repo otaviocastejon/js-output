@@ -4,10 +4,10 @@
 
 ```bash
 npm install
-npm test
-npm run typecheck
-npm run build
+npm run check
 ```
+
+`npm install` enables a **pre-commit** hook (Husky) that runs `npm run check` — the same gate as CI: typecheck, tests, and build.
 
 ## Layout
 
@@ -15,7 +15,6 @@ npm run build
 src/           core + nest/ subpath
 tests/         vitest
 examples/      plain HTTP + Nest sample
-docs/          positioning / adoption notes
 ```
 
 - Core entry: `js-output` → `src/index.ts`
@@ -24,6 +23,6 @@ docs/          positioning / adoption notes
 
 ## PR checklist
 
-- [ ] `npm test` and `npm run typecheck` pass
+- [ ] `npm run check` passes (also enforced on commit)
 - [ ] Changelog updated for user-facing changes
 - [ ] Examples/README still match the public names
